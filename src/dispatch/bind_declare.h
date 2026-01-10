@@ -71,5 +71,3 @@ int32_t enable_monitor(const Arg *arg);
 int32_t toggle_monitor(const Arg *arg);
 int32_t consume_or_expel_window_left(const Arg *arg);
 int32_t consume_or_expel_window_right(const Arg *arg);
-int32_t focus_tile_up(const Arg *arg);
-int32_t focus_tile_down(const Arg *arg);

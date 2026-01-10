@@ -846,10 +846,6 @@ FuncType parse_func_name(char *func_name, Arg *arg, char *arg_value,
 		func = consume_or_expel_window_left;
 	} else if (strcmp(func_name, "consume_or_expel_window_right") == 0) {
 		func = consume_or_expel_window_right;
-	} else if (strcmp(func_name, "focus_tile_up") == 0) {
-		func = focus_tile_up;
-	} else if (strcmp(func_name, "focus_tile_down") == 0) {
-		func = focus_tile_down;
 	} else if (strcmp(func_name, "toggleglobal") == 0) {
 		func = toggleglobal;
 	} else if (strcmp(func_name, "toggleoverview") == 0) {

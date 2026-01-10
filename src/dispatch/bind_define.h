@@ -133,6 +133,12 @@ int32_t focusdir(const Arg *arg) {
 		focusclient(c, 1);
 		if (warpcursor)
 			warp_cursor(c);
+
+		/* Update active_tile_idx for scroller layout vertical navigation */
+		if (is_scroller_layout(selmon) && c->column && c->tile_index >= 0 &&
+			(arg->i == UP || arg->i == DOWN)) {
+			c->column->active_tile_idx = c->tile_index;
+		}
 	} else {
 		if (config.focus_cross_tag) {
 			if (arg->i == LEFT || arg->i == UP)
@@ -1692,46 +1698,3 @@ int32_t consume_or_expel_window_right(const Arg *arg) {
 	return 0;
 }
 
-int32_t focus_tile_up(const Arg *arg) {
-	Client *c = selmon->sel;
-	if (!c || !c->column || c->column->tile_count <= 1)
-		return 0;
-
-	if (!is_scroller_layout(selmon))
-		return 0;
-
-	ScrollerColumn *col = c->column;
-	int32_t new_idx = col->active_tile_idx - 1;
-	if (new_idx < 0)
-		new_idx = col->tile_count - 1;
-
-	col->active_tile_idx = new_idx;
-	Client *new_focus = column_get_active_tile(col);
-	if (new_focus) {
-		focusclient(new_focus, 1);
-		if (warpcursor)
-			warp_cursor(new_focus);
-	}
-	return 0;
-}
-
-int32_t focus_tile_down(const Arg *arg) {
-	Client *c = selmon->sel;
-	if (!c || !c->column || c->column->tile_count <= 1)
-		return 0;
-
-	if (!is_scroller_layout(selmon))
-		return 0;
-
-	ScrollerColumn *col = c->column;
-	int32_t new_idx = (col->active_tile_idx + 1) % col->tile_count;
-
-	col->active_tile_idx = new_idx;
-	Client *new_focus = column_get_active_tile(col);
-	if (new_focus) {
-		focusclient(new_focus, 1);
-		if (warpcursor)
-			warp_cursor(new_focus);
-	}
-	return 0;
-}
