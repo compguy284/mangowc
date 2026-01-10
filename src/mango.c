@@ -206,6 +206,7 @@ enum print_event_type {
 typedef struct Pertag Pertag;
 typedef struct Monitor Monitor;
 typedef struct Client Client;
+typedef struct ScrollerColumn ScrollerColumn;
 
 struct dvec2 {
 	double x, y;
@@ -407,6 +408,10 @@ struct Client {
 	int32_t allow_shortcuts_inhibit;
 	float scroller_proportion_single;
 	bool isfocusing;
+	/* Scroller column grouping */
+	struct wl_list column_link;    /* Link within column's tiles list */
+	ScrollerColumn *column;        /* Owning column (NULL if not in scroller) */
+	int32_t tile_index;            /* Index within column */
 };
 
 typedef struct {
@@ -513,6 +518,10 @@ struct Monitor {
 	struct wlr_scene_optimized_blur *blur;
 	char last_surface_ws_name[256];
 	struct wlr_ext_workspace_group_handle_v1 *ext_group;
+	/* Scroller column grouping */
+	struct wl_list scroller_columns;   /* List of ScrollerColumn */
+	int32_t active_column_idx;
+	int32_t column_count;
 };
 
 typedef struct {
@@ -941,6 +950,7 @@ static struct wlr_xwayland *xwayland;
 #include "animation/layer.h"
 #include "animation/tag.h"
 #include "config/parse_config.h"
+#include "layout/column.h"
 #include "dispatch/bind_define.h"
 #include "ext-protocol/all.h"
 #include "fetch/fetch.h"
@@ -2660,6 +2670,9 @@ void createmon(struct wl_listener *listener, void *data) {
 	m->wlr_output->data = m;
 
 	wl_list_init(&m->dwl_ipc_outputs);
+	wl_list_init(&m->scroller_columns);
+	m->active_column_idx = 0;
+	m->column_count = 0;
 
 	for (i = 0; i < LENGTH(m->layers); i++)
 		wl_list_init(&m->layers[i]);
@@ -2817,6 +2830,9 @@ createnotify(struct wl_listener *listener, void *data) {
 	c = toplevel->base->data = ecalloc(1, sizeof(*c));
 	c->surface.xdg = toplevel->base;
 	c->bw = borderpx;
+	wl_list_init(&c->column_link);
+	c->column = NULL;
+	c->tile_index = -1;
 
 	LISTEN(&toplevel->base->surface->events.commit, &c->commit, commitnotify);
 	LISTEN(&toplevel->base->surface->events.map, &c->map, mapnotify);
@@ -3111,6 +3127,17 @@ void // 0.7 custom
 destroynotify(struct wl_listener *listener, void *data) {
 	/* Called when the xdg_toplevel is destroyed. */
 	Client *c = wl_container_of(listener, c, destroy);
+
+	/* Remove from scroller column if any */
+	if (c->column) {
+		ScrollerColumn *col = c->column;
+		column_remove_client(c);
+		if (col->tile_count == 0) {
+			column_remove(col->mon, col);
+			column_destroy(col);
+		}
+	}
+
 	wl_list_remove(&c->destroy.link);
 	wl_list_remove(&c->set_title.link);
 	wl_list_remove(&c->fullscreen.link);
@@ -5888,6 +5915,9 @@ void createnotifyx11(struct wl_listener *listener, void *data) {
 	c = xsurface->data = ecalloc(1, sizeof(*c));
 	c->surface.xwayland = xsurface;
 	c->type = X11;
+	wl_list_init(&c->column_link);
+	c->column = NULL;
+	c->tile_index = -1;
 	/* Listen to the various events it can emit */
 	LISTEN(&xsurface->events.associate, &c->associate, associatex11);
 	LISTEN(&xsurface->events.destroy, &c->destroy, destroynotify);

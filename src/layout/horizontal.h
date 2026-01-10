@@ -214,66 +214,74 @@ void horizontal_scroll_adjust_fullandmax(Client *c,
 
 // 滚动布局
 void scroller(Monitor *m) {
-	int32_t i, n, j;
+	int32_t i, n;
 	float single_proportion = 1.0;
 
 	Client *c = NULL, *root_client = NULL;
-	Client **tempClients = NULL; // 初始化为 NULL
 	struct wlr_box target_geom;
-	int32_t focus_client_index = 0;
+	int32_t focus_column_index = 0;
 	bool need_scroller = false;
 	int32_t cur_gappih = enablegaps ? m->gappih : 0;
+	int32_t cur_gappiv = enablegaps ? m->gappiv : 0;
 	int32_t cur_gappoh = enablegaps ? m->gappoh : 0;
 	int32_t cur_gappov = enablegaps ? m->gappov : 0;
 
 	cur_gappih =
 		smartgaps && m->visible_scroll_tiling_clients == 1 ? 0 : cur_gappih;
+	cur_gappiv =
+		smartgaps && m->visible_scroll_tiling_clients == 1 ? 0 : cur_gappiv;
 	cur_gappoh =
 		smartgaps && m->visible_scroll_tiling_clients == 1 ? 0 : cur_gappoh;
 	cur_gappov =
 		smartgaps && m->visible_scroll_tiling_clients == 1 ? 0 : cur_gappov;
 
-	int32_t max_client_width = m->w.width - 2 * scroller_structs - cur_gappih;
+	int32_t max_column_width = m->w.width - 2 * scroller_structs - cur_gappih;
 
 	n = m->visible_scroll_tiling_clients;
 
 	if (n == 0) {
-		return; // 没有需要处理的客户端，直接返回
-	}
-
-	// 动态分配内存
-	tempClients = malloc(n * sizeof(Client *));
-	if (!tempClients) {
-		// 处理内存分配失败的情况
+		/* Clean up columns if no visible clients */
+		if (m->column_count > 0) {
+			column_cleanup_for_monitor(m);
+		}
 		return;
 	}
 
-	// 第二次遍历，填充 tempClients
-	j = 0;
-	wl_list_for_each(c, &clients, link) {
-		if (VISIBLEON(c, m) && ISSCROLLTILED(c)) {
-			tempClients[j] = c;
-			j++;
+	/* Ensure columns exist for all visible tiled clients */
+	if (wl_list_empty(&m->scroller_columns)) {
+		/* No columns exist - migrate from flat list */
+		scroller_migrate_to_columns(m);
+	} else {
+		/* Add any clients that don't have columns yet */
+		Client *tc;
+		wl_list_for_each(tc, &clients, link) {
+			if (tc->mon == m && VISIBLEON(tc, m) && ISSCROLLTILED(tc) && !tc->column) {
+				scroller_add_client_to_columns(tc);
+			}
 		}
 	}
 
-	if (n == 1 && !scroller_ignore_proportion_single &&
-		!tempClients[0]->isfullscreen && !tempClients[0]->ismaximizescreen) {
-		c = tempClients[0];
+	/* Handle single window case */
+	if (m->column_count == 1 && !scroller_ignore_proportion_single) {
+		ScrollerColumn *col = column_at_index(m, 0);
+		if (col && col->tile_count == 1) {
+			c = column_get_active_tile(col);
+			if (c && !c->isfullscreen && !c->ismaximizescreen) {
+				single_proportion = c->scroller_proportion_single > 0.0f
+										? c->scroller_proportion_single
+										: scroller_default_proportion_single;
 
-		single_proportion = c->scroller_proportion_single > 0.0f
-								? c->scroller_proportion_single
-								: scroller_default_proportion_single;
-
-		target_geom.height = m->w.height - 2 * cur_gappov;
-		target_geom.width = (m->w.width - 2 * cur_gappoh) * single_proportion;
-		target_geom.x = m->w.x + (m->w.width - target_geom.width) / 2;
-		target_geom.y = m->w.y + (m->w.height - target_geom.height) / 2;
-		resize(c, target_geom, 0);
-		free(tempClients); // 释放内存
-		return;
+				target_geom.height = m->w.height - 2 * cur_gappov;
+				target_geom.width = (m->w.width - 2 * cur_gappoh) * single_proportion;
+				target_geom.x = m->w.x + (m->w.width - target_geom.width) / 2;
+				target_geom.y = m->w.y + cur_gappov;
+				scroller_render_column(col, &target_geom, cur_gappiv);
+				return;
+			}
+		}
 	}
 
+	/* Find root client and its column */
 	if (m->sel && !client_is_unmanaged(m->sel) && ISSCROLLTILED(m->sel)) {
 		root_client = m->sel;
 	} else if (m->prevsel && ISSCROLLTILED(m->prevsel) &&
@@ -284,87 +292,123 @@ void scroller(Monitor *m) {
 	}
 
 	if (!root_client) {
-		free(tempClients); // 释放内存
 		return;
 	}
 
-	for (i = 0; i < n; i++) {
-		c = tempClients[i];
-		if (root_client == c) {
-			if (c->geom.x >= m->w.x + scroller_structs &&
-				c->geom.x + c->geom.width <=
-					m->w.x + m->w.width - scroller_structs) {
-				need_scroller = false;
-			} else {
-				need_scroller = true;
-			}
-			focus_client_index = i;
-			break;
-		}
+	/* Find the column containing root_client */
+	ScrollerColumn *active_col = root_client->column;
+	if (!active_col) {
+		/* Root client not in a column - rebuild */
+		scroller_rebuild_columns(m);
+		active_col = root_client->column;
+		if (!active_col)
+			return;
 	}
 
-	if (n == 1 && scroller_ignore_proportion_single) {
+	focus_column_index = column_index_of(m, active_col);
+	if (focus_column_index < 0)
+		focus_column_index = 0;
+
+	m->active_column_idx = focus_column_index;
+
+	/* Determine if scrolling is needed */
+	if (root_client->geom.x >= m->w.x + scroller_structs &&
+		root_client->geom.x + root_client->geom.width <=
+			m->w.x + m->w.width - scroller_structs) {
+		need_scroller = false;
+	} else {
+		need_scroller = true;
+	}
+
+	if (m->column_count == 1 && scroller_ignore_proportion_single) {
 		need_scroller = true;
 	}
 
 	if (start_drag_window)
 		need_scroller = false;
 
+	/* Calculate and position the focused column */
 	target_geom.height = m->w.height - 2 * cur_gappov;
-	target_geom.width = max_client_width * c->scroller_proportion;
-	target_geom.y = m->w.y + (m->w.height - target_geom.height) / 2;
-	horizontal_scroll_adjust_fullandmax(tempClients[focus_client_index],
-										&target_geom);
-	if (tempClients[focus_client_index]->isfullscreen) {
-		target_geom.x = m->m.x;
-		resize(tempClients[focus_client_index], target_geom, 0);
-	} else if (tempClients[focus_client_index]->ismaximizescreen) {
-		target_geom.x = m->w.x + cur_gappoh;
-		resize(tempClients[focus_client_index], target_geom, 0);
-	} else if (need_scroller) {
-		if (scroller_focus_center ||
-			((!m->prevsel ||
-			  (ISSCROLLTILED(m->prevsel) &&
-			   (m->prevsel->scroller_proportion * max_client_width) +
-					   (root_client->scroller_proportion * max_client_width) >
-				   m->w.width - 2 * scroller_structs - cur_gappih)) &&
-			 scroller_prefer_center)) {
-			target_geom.x = m->w.x + (m->w.width - target_geom.width) / 2;
+	target_geom.width = max_column_width * active_col->proportion;
+	target_geom.y = m->w.y + cur_gappov;
+
+	/* Check for fullscreen/maximize in the focused column */
+	Client *focus_client = column_get_active_tile(active_col);
+	if (focus_client) {
+		horizontal_scroll_adjust_fullandmax(focus_client, &target_geom);
+
+		if (focus_client->isfullscreen) {
+			target_geom.x = m->m.x;
+			scroller_render_column(active_col, &target_geom, cur_gappiv);
+		} else if (focus_client->ismaximizescreen) {
+			target_geom.x = m->w.x + cur_gappoh;
+			scroller_render_column(active_col, &target_geom, cur_gappiv);
+		} else if (need_scroller) {
+			if (scroller_focus_center ||
+				((!m->prevsel ||
+				  (ISSCROLLTILED(m->prevsel) && m->prevsel->column &&
+				   (m->prevsel->column->proportion * max_column_width) +
+						   (active_col->proportion * max_column_width) >
+					   m->w.width - 2 * scroller_structs - cur_gappih)) &&
+				 scroller_prefer_center)) {
+				target_geom.x = m->w.x + (m->w.width - target_geom.width) / 2;
+			} else {
+				target_geom.x = root_client->geom.x > m->w.x + (m->w.width) / 2
+									? m->w.x + (m->w.width -
+												active_col->proportion *
+													max_column_width -
+												scroller_structs)
+									: m->w.x + scroller_structs;
+			}
+			scroller_render_column(active_col, &target_geom, cur_gappiv);
 		} else {
-			target_geom.x = root_client->geom.x > m->w.x + (m->w.width) / 2
-								? m->w.x + (m->w.width -
-											root_client->scroller_proportion *
-												max_client_width -
-											scroller_structs)
-								: m->w.x + scroller_structs;
+			target_geom.x = focus_client->geom.x;
+			scroller_render_column(active_col, &target_geom, cur_gappiv);
 		}
-		resize(tempClients[focus_client_index], target_geom, 0);
-	} else {
-		target_geom.x = c->geom.x;
-		resize(tempClients[focus_client_index], target_geom, 0);
 	}
 
-	for (i = 1; i <= focus_client_index; i++) {
-		c = tempClients[focus_client_index - i];
-		target_geom.width = max_client_width * c->scroller_proportion;
-		horizontal_scroll_adjust_fullandmax(c, &target_geom);
-		target_geom.x = tempClients[focus_client_index - i + 1]->geom.x -
-						cur_gappih - target_geom.width;
+	/* Store the focused column's geometry for positioning others */
+	struct wlr_box focus_col_geom = target_geom;
 
-		resize(c, target_geom, 0);
+	/* Position columns to the left of focused column */
+	int32_t left_x = focus_col_geom.x;
+	for (i = focus_column_index - 1; i >= 0; i--) {
+		ScrollerColumn *col = column_at_index(m, i);
+		if (!col)
+			continue;
+
+		target_geom.width = max_column_width * col->proportion;
+		target_geom.height = m->w.height - 2 * cur_gappov;
+		target_geom.y = m->w.y + cur_gappov;
+		target_geom.x = left_x - cur_gappih - target_geom.width;
+
+		Client *col_focus = column_get_active_tile(col);
+		if (col_focus)
+			horizontal_scroll_adjust_fullandmax(col_focus, &target_geom);
+
+		scroller_render_column(col, &target_geom, cur_gappiv);
+		left_x = target_geom.x;
 	}
 
-	for (i = 1; i < n - focus_client_index; i++) {
-		c = tempClients[focus_client_index + i];
-		target_geom.width = max_client_width * c->scroller_proportion;
-		horizontal_scroll_adjust_fullandmax(c, &target_geom);
-		target_geom.x = tempClients[focus_client_index + i - 1]->geom.x +
-						cur_gappih +
-						tempClients[focus_client_index + i - 1]->geom.width;
-		resize(c, target_geom, 0);
-	}
+	/* Position columns to the right of focused column */
+	int32_t right_x = focus_col_geom.x + focus_col_geom.width;
+	for (i = focus_column_index + 1; i < m->column_count; i++) {
+		ScrollerColumn *col = column_at_index(m, i);
+		if (!col)
+			continue;
 
-	free(tempClients); // 最后释放内存
+		target_geom.width = max_column_width * col->proportion;
+		target_geom.height = m->w.height - 2 * cur_gappov;
+		target_geom.y = m->w.y + cur_gappov;
+		target_geom.x = right_x + cur_gappih;
+
+		Client *col_focus = column_get_active_tile(col);
+		if (col_focus)
+			horizontal_scroll_adjust_fullandmax(col_focus, &target_geom);
+
+		scroller_render_column(col, &target_geom, cur_gappiv);
+		right_x = target_geom.x + target_geom.width;
+	}
 }
 
 void center_tile(Monitor *m) {

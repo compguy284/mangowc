@@ -1585,3 +1585,153 @@ int32_t toggle_monitor(const Arg *arg) {
 	}
 	return 0;
 }
+
+int32_t consume_or_expel_window_left(const Arg *arg) {
+	Client *c = selmon->sel;
+	if (!c || c->isfloating || !is_scroller_layout(selmon))
+		return 0;
+
+	if (selmon->isoverview)
+		return 0;
+
+	ScrollerColumn *col = c->column;
+	if (!col)
+		return 0;
+
+	if (column_is_single_tile(col)) {
+		/* CONSUME: Move into left column - windows stack vertically */
+		int32_t idx = column_index_of(selmon, col);
+		if (idx <= 0)
+			return 0; /* No left column */
+
+		ScrollerColumn *target = column_at_index(selmon, idx - 1);
+		if (!target)
+			return 0;
+
+		/* Remove from current column */
+		column_remove_client(c);
+		if (col->tile_count == 0) {
+			column_remove(selmon, col);
+			column_destroy(col);
+		}
+
+		/* Add to target column at end */
+		column_add_tile(target, c, -1);
+		target->active_tile_idx = target->tile_count - 1;
+		selmon->active_column_idx = column_index_of(selmon, target);
+	} else {
+		/* EXPEL: Split out as new column to left */
+		int32_t idx = column_index_of(selmon, col);
+		float proportion = c->scroller_proportion;
+
+		/* Remove from current column */
+		column_remove_client(c);
+
+		/* Create new column with this single tile */
+		ScrollerColumn *new_col = column_create(selmon, proportion);
+		column_add_tile(new_col, c, 0);
+		column_insert_at(selmon, new_col, idx);
+		selmon->active_column_idx = idx;
+	}
+
+	arrange(selmon, true, false);
+	focusclient(c, 1);
+	return 0;
+}
+
+int32_t consume_or_expel_window_right(const Arg *arg) {
+	Client *c = selmon->sel;
+	if (!c || c->isfloating || !is_scroller_layout(selmon))
+		return 0;
+
+	if (selmon->isoverview)
+		return 0;
+
+	ScrollerColumn *col = c->column;
+	if (!col)
+		return 0;
+
+	if (column_is_single_tile(col)) {
+		/* CONSUME: Move into right column - windows stack vertically */
+		int32_t idx = column_index_of(selmon, col);
+		if (idx >= selmon->column_count - 1)
+			return 0; /* No right column */
+
+		ScrollerColumn *target = column_at_index(selmon, idx + 1);
+		if (!target)
+			return 0;
+
+		/* Remove from current column */
+		column_remove_client(c);
+		if (col->tile_count == 0) {
+			column_remove(selmon, col);
+			column_destroy(col);
+		}
+
+		/* Add to target column at beginning */
+		column_add_tile(target, c, 0);
+		target->active_tile_idx = 0;
+		selmon->active_column_idx = column_index_of(selmon, target);
+	} else {
+		/* EXPEL: Split out as new column to right */
+		int32_t idx = column_index_of(selmon, col);
+		float proportion = c->scroller_proportion;
+
+		/* Remove from current column */
+		column_remove_client(c);
+
+		/* Create new column with this single tile */
+		ScrollerColumn *new_col = column_create(selmon, proportion);
+		column_add_tile(new_col, c, 0);
+		column_insert_at(selmon, new_col, idx + 1);
+		selmon->active_column_idx = idx + 1;
+	}
+
+	arrange(selmon, true, false);
+	focusclient(c, 1);
+	return 0;
+}
+
+int32_t focus_tile_up(const Arg *arg) {
+	Client *c = selmon->sel;
+	if (!c || !c->column || c->column->tile_count <= 1)
+		return 0;
+
+	if (!is_scroller_layout(selmon))
+		return 0;
+
+	ScrollerColumn *col = c->column;
+	int32_t new_idx = col->active_tile_idx - 1;
+	if (new_idx < 0)
+		new_idx = col->tile_count - 1;
+
+	col->active_tile_idx = new_idx;
+	Client *new_focus = column_get_active_tile(col);
+	if (new_focus) {
+		focusclient(new_focus, 1);
+		if (warpcursor)
+			warp_cursor(new_focus);
+	}
+	return 0;
+}
+
+int32_t focus_tile_down(const Arg *arg) {
+	Client *c = selmon->sel;
+	if (!c || !c->column || c->column->tile_count <= 1)
+		return 0;
+
+	if (!is_scroller_layout(selmon))
+		return 0;
+
+	ScrollerColumn *col = c->column;
+	int32_t new_idx = (col->active_tile_idx + 1) % col->tile_count;
+
+	col->active_tile_idx = new_idx;
+	Client *new_focus = column_get_active_tile(col);
+	if (new_focus) {
+		focusclient(new_focus, 1);
+		if (warpcursor)
+			warp_cursor(new_focus);
+	}
+	return 0;
+}
