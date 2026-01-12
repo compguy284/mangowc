@@ -436,8 +436,8 @@ void scroller_sync_clients_to_columns(Monitor *m) {
 
 	/* Re-insert the reordered clients at the beginning of the clients list */
 	while (!wl_list_empty(&reordered)) {
-		struct wl_list *first = reordered.next;
-		wl_list_remove(first);
-		wl_list_insert(&clients, first);
+		struct wl_list *last = reordered.prev;
+		wl_list_remove(last);
+		wl_list_insert(&clients, last);
 	}
 }
