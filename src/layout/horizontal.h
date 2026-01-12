@@ -183,6 +183,8 @@ void deck(Monitor *m) {
 void horizontal_scroll_adjust_fullandmax(Client *c,
 										 struct wlr_box *target_geom) {
 	Monitor *m = c->mon;
+	if (!m)
+		return;
 	int32_t cur_gappih = enablegaps ? m->gappih : 0;
 	int32_t cur_gappoh = enablegaps ? m->gappoh : 0;
 	int32_t cur_gappov = enablegaps ? m->gappov : 0;
