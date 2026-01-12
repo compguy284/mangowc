@@ -408,3 +408,36 @@ void scroller_remove_client_from_columns(Client *c) {
 		column_destroy(col);
 	}
 }
+
+/*
+ * Sync the global clients list order to match the scroller column order.
+ * This ensures that when switching to other layouts (tile, grid, etc.),
+ * windows maintain their relative positions as arranged in scroller layout.
+ */
+void scroller_sync_clients_to_columns(Monitor *m) {
+	if (!m || wl_list_empty(&m->scroller_columns))
+		return;
+
+	/* Collect all scroller-tiled clients from columns in order */
+	ScrollerColumn *col;
+	Client *c;
+	struct wl_list reordered;
+	wl_list_init(&reordered);
+
+	wl_list_for_each(col, &m->scroller_columns, link) {
+		wl_list_for_each(c, &col->tiles, column_link) {
+			if (c->mon == m && VISIBLEON(c, m) && ISSCROLLTILED(c)) {
+				/* Temporarily move to reordered list */
+				wl_list_remove(&c->link);
+				wl_list_insert(reordered.prev, &c->link);
+			}
+		}
+	}
+
+	/* Re-insert the reordered clients at the beginning of the clients list */
+	while (!wl_list_empty(&reordered)) {
+		struct wl_list *first = reordered.next;
+		wl_list_remove(first);
+		wl_list_insert(&clients, first);
+	}
+}

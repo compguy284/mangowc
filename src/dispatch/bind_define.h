@@ -1640,6 +1640,9 @@ int32_t consume_or_expel_window_left(const Arg *arg) {
 		selmon->active_column_idx = idx;
 	}
 
+	/* Sync global clients list to match column order */
+	scroller_sync_clients_to_columns(selmon);
+
 	arrange(selmon, true, false);
 	focusclient(c, 1);
 	return 0;
@@ -1692,6 +1695,9 @@ int32_t consume_or_expel_window_right(const Arg *arg) {
 		column_insert_at(selmon, new_col, idx + 1);
 		selmon->active_column_idx = idx + 1;
 	}
+
+	/* Sync global clients list to match column order */
+	scroller_sync_clients_to_columns(selmon);
 
 	arrange(selmon, true, false);
 	focusclient(c, 1);
