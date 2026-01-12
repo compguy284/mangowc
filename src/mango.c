@@ -5481,6 +5481,7 @@ void unmapnotify(struct wl_listener *listener, void *data) {
 	} else {
 		if (!c->swallowing)
 			wl_list_remove(&c->link);
+		scroller_remove_client_from_columns(c);
 		setmon(c, NULL, 0, true);
 		if (!c->swallowing)
 			wl_list_remove(&c->flink);
